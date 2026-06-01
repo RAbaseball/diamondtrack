@@ -1,0 +1,97 @@
+<div id="root"></div>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+<script type="text/babel">
+const {useState} = React;
+const URL = "https://azjzrggwmnmkenssqmel.supabase.co";
+const KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF6anpyZ2d3bW5ta2Vuc3NxbWVsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAyNDE0MjIsImV4cCI6MjA5NTgxNzQyMn0.gfDeej9HATGCFQayv0T1huq3c9hliBIXwu6J6vC0PF4";
+let tok = null;
+
+function App() {
+  const [email,setEmail]=useState("");
+  const [pass,setPass]=useState("");
+  const [name,setName]=useState("");
+  const [role,setRole]=useState("coach");
+  const [isUp,setIsUp]=useState(false);
+  const [log,setLog]=useState([]);
+  const [err,setErr]=useState("");
+  const [done,setDone]=useState(null);
+  const [loading,setLoading]=useState(false);
+  const add=(m)=>setLog(p=>[...p,m]);
+
+  const go=async()=>{
+    setErr("");setLog([]);setLoading(true);
+    try{
+      if(isUp){
+        add("1. Signing up...");
+        const r=await fetch(`${URL}/auth/v1/signup`,{method:"POST",headers:{"Content-Type":"application/json","apikey":KEY},body:JSON.stringify({email,password:pass})});
+        const d=await r.json();
+        add("Result: "+JSON.stringify({ok:r.ok,id:d.user?.id||d.id,err:d.message||d.msg}));
+        if(!r.ok) throw new Error(d.message||d.msg||d.error_description||JSON.stringify(d));
+        const uid=d.user?.id||d.id;
+        if(!uid) throw new Error("No user ID returned");
+        if(d.access_token) tok=d.access_token;
+        add("2. Saving profile...");
+        const ph={"Content-Type":"application/json","apikey":KEY,"Authorization":`Bearer ${tok||KEY}`,"Prefer":"return=representation"};
+        const pr=await fetch(`${URL}/rest/v1/profiles`,{method:"POST",headers:ph,body:JSON.stringify([{id:uid,email,name:name||email.split("@")[0],role,avatar:(name||email).slice(0,2).toUpperCase()}])});
+        const pd=await pr.json();
+        add("Profile: "+JSON.stringify({ok:pr.ok,err:pr.ok?null:(pd.message||pd.code||JSON.stringify(pd))}));
+        if(!pr.ok){
+          const msg=pd.message||pd.hint||pd.code||JSON.stringify(pd);
+          if(msg.includes("relation")||msg.includes("does not exist")||pd.code==="42P01") throw new Error("❌ Run diamondtrack_schema.sql in Supabase SQL Editor first");
+          if(pd.code==="23505") throw new Error("Email already registered — try Sign In");
+          throw new Error("Profile error: "+msg);
+        }
+        if(!d.access_token){add("📧 Check email to confirm");setDone("check_email");}
+        else{add("✅ Success!");setDone({name:name||email.split("@")[0],role});}
+      } else {
+        add("1. Signing in...");
+        const r=await fetch(`${URL}/auth/v1/token?grant_type=password`,{method:"POST",headers:{"Content-Type":"application/json","apikey":KEY},body:JSON.stringify({email,password:pass})});
+        const d=await r.json();
+        add("Result: "+JSON.stringify({ok:r.ok,id:d.user?.id,err:d.message||d.msg}));
+        if(!r.ok) throw new Error(d.message||d.error_description||JSON.stringify(d));
+        tok=d.access_token;
+        add("2. Loading profile...");
+        const ph={"apikey":KEY,"Authorization":`Bearer ${tok}`,"Accept":"application/vnd.pgrst.object+json"};
+        const pr=await fetch(`${URL}/rest/v1/profiles?id=eq.${d.user.id}&select=*`,{headers:ph});
+        const prof=pr.status===406?null:await pr.json().catch(()=>null);
+        add("Profile: "+(prof?"found ✓":"not found"));
+        if(!prof) throw new Error("Profile not found — run SQL schema first");
+        add("✅ Logged in!");
+        setDone(prof);
+      }
+    }catch(e){setErr(e.message);}
+    setLoading(false);
+  };
+
+  const s={wrap:{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#080e1a",padding:20},card:{background:"#0d1526",border:"1px solid rgba(255,255,255,.12)",borderRadius:16,padding:32,width:"100%",maxWidth:380,color:"#eef2f8",fontFamily:"sans-serif"},title:{fontSize:24,fontWeight:700,letterSpacing:2,textTransform:"uppercase",textAlign:"center",marginBottom:6},gold:{color:"#e8a020"},sub:{fontSize:13,color:"#6b82a0",textAlign:"center",marginBottom:20},inp:{width:"100%",background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.12)",borderRadius:7,padding:"8px 11px",color:"#eef2f8",fontSize:14,outline:"none",marginBottom:10},btn:{width:"100%",background:"#e8a020",color:"#080e1a",border:"none",borderRadius:8,padding:11,fontSize:14,fontWeight:700,textTransform:"uppercase",cursor:"pointer",marginTop:4},rbtn:(on)=>({flex:1,padding:"10px 6px",borderRadius:8,border:`2px solid ${on?"#e8a020":"rgba(255,255,255,.12)"}`,background:on?"rgba(232,160,32,.08)":"transparent",color:"#eef2f8",cursor:"pointer",textAlign:"center",fontSize:13}),err:{background:"rgba(232,64,64,.12)",border:"1px solid rgba(232,64,64,.3)",borderRadius:8,padding:"10px 12px",fontSize:13,color:"#e84040",marginBottom:10},dbg:{background:"rgba(0,0,0,.5)",border:"1px solid rgba(255,255,255,.1)",borderRadius:8,padding:"10px 12px",fontFamily:"monospace",fontSize:11,color:"#7fb",lineHeight:1.7,marginBottom:10,maxHeight:130,overflowY:"auto"},lnk:{textAlign:"center",marginTop:14,fontSize:13,color:"#6b82a0"}};
+
+  if(done==="check_email") return <div style={s.wrap}><div style={s.card}><div style={{textAlign:"center"}}><div style={{fontSize:44,marginBottom:12}}>📧</div><div style={{...s.title,fontSize:18}}>Check your email</div><div style={s.sub}>Click the confirmation link then come back and Sign In.</div><button style={s.btn} onClick={()=>{setDone(null);setIsUp(false);}}>Back to Sign In</button></div></div></div>;
+
+  if(done&&done!=="check_email") return <div style={s.wrap}><div style={s.card}><div style={{textAlign:"center"}}><div style={{fontSize:44,marginBottom:12}}>🏆</div><div style={{...s.title,color:"#27c97a",fontSize:20}}>You're in!</div><div style={{fontSize:14,margin:"12px 0",color:"#8fa3be"}}>{done.name} · {done.role||done.email}</div><div style={{background:"rgba(39,201,122,.08)",border:"1px solid rgba(39,201,122,.25)",borderRadius:8,padding:"12px 14px",fontSize:13,color:"#27c97a"}}>✅ Login works! Database connected.</div><button style={{...s.btn,marginTop:16}} onClick={()=>{setDone(null);tok=null;setEmail("");setPass("");}}>Sign Out</button></div></div></div>;
+
+  return(
+    <div style={s.wrap}>
+      <div style={s.card}>
+        <div style={s.title}>Diamond<span style={s.gold}>Track</span></div>
+        <div style={s.sub}>{isUp?"Create account":"Sign in"}</div>
+        {isUp&&<>
+          <div style={{display:"flex",gap:8,marginBottom:12}}>
+            <button style={s.rbtn(role==="coach")} onClick={()=>setRole("coach")}>🎓 Coach</button>
+            <button style={s.rbtn(role==="athlete")} onClick={()=>setRole("athlete")}>⚾ Athlete</button>
+          </div>
+          <input style={s.inp} placeholder="Your name" value={name} onChange={e=>setName(e.target.value)}/>
+        </>}
+        {err&&<div style={s.err}>{err}</div>}
+        {log.length>0&&<div style={s.dbg}>{log.map((l,i)=><div key={i}>{l}</div>)}</div>}
+        <input style={s.inp} type="email" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)}/>
+        <input style={s.inp} type="password" placeholder="Password" value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()}/>
+        <button style={s.btn} onClick={go} disabled={loading}>{loading?"Loading...":isUp?"Create Account":"Sign In"}</button>
+        <div style={s.lnk}>{isUp?"Have an account?":"Need an account?"} <button style={{background:"none",border:"none",color:"#e8a020",cursor:"pointer",fontWeight:600,fontSize:13}} onClick={()=>{setIsUp(!isUp);setErr("");setLog([]);}}>{isUp?"Sign In":"Sign Up"}</button></div>
+      </div>
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
