@@ -208,6 +208,16 @@ function fmtTime12(t){
 const FIELD_POS=["P","C","1B","2B","3B","SS","LF","CF","RF"];
 const LINEUP_POS=["P","C","1B","2B","3B","SS","LF","CF","RF","DH"];
 const GAME_INNINGS=[1,2,3,4,5,6,7,8,9];
+function gamePlayers(game,athletes){
+  const guests=(game.guests||[]).map(g=>({...g,isGuest:true}));
+  return[...athletes,...guests];
+}
+function playerLabel(id,game,athletes){
+  const p=gamePlayers(game,athletes).find(x=>x.id===id);
+  if(!p)return"Unknown";
+  return p.isGuest?`${p.name} (Guest)`:p.name;
+}
+
 function getChartForInning(game,inning){
   const fc=game.field_chart||{};
   if(fc[inning])return fc[inning];
@@ -253,13 +263,12 @@ function buildGameText(game,team,weekend,athletes,staffById){
   lines.push("");
   lines.push("BATTING LINEUP");
   if(!game.lineup||game.lineup.length===0){lines.push("(no lineup set yet)");}
-  else{game.lineup.forEach((entry,i)=>{const a=athletes.find(x=>x.id===entry.athleteId);lines.push(`${i+1}. ${a?a.name:"Unknown"} — ${entry.position||"?"}`);});}
+  else{game.lineup.forEach((entry,i)=>{lines.push(`${i+1}. ${playerLabel(entry.athleteId,game,athletes)} — ${entry.position||"?"}`);});}
   if(game.pitching&&game.pitching.length>0){
     lines.push("");lines.push("PITCHING PLAN");
     game.pitching.forEach(p=>{
-      const a=athletes.find(x=>x.id===p.athleteId);
       const inn=(p.innings||[]).slice().sort((x,y)=>x-y).join(", ")||"—";
-      let row=`Inn ${inn}: ${a?a.name:"Unknown"}`;
+      let row=`Inn ${inn}: ${playerLabel(p.athleteId,game,athletes)}`;
       if(p.limit)row+=` (max ${p.limit} pitches)`;
       if(p.note)row+=` — ${p.note}`;
       lines.push(row);
@@ -667,7 +676,7 @@ function App(){
       // Matching on role OR secondary_role so dual-role profiles show up everywhere
       // they need to (e.g. an athlete who also coaches still appears in rosters).
       const athUrl=profile.role==="coach"
-        ?`profiles?or=(role.eq.athlete,secondary_role.eq.athlete)&coach_id=eq.${profile.id}&select=*&limit=5000`
+        ?`profiles?or=(role.eq.athlete,secondary_role.eq.athlete)&coach_ids=cs.{${profile.id}}&select=*&limit=5000`
         :"profiles?or=(role.eq.athlete,secondary_role.eq.athlete)&select=*&limit=5000";
       const progUrl=profile.role==="coach"
         ?`programs?created_by=eq.${profile.id}&select=*&limit=5000`
@@ -915,12 +924,22 @@ ${doneEx.map(e=>e.name).join(", ")}`,
     if(!r.ok){alert("Couldn't save: "+await r.text());}
   };
 
-  const reassignAthlete=async(athId,coachId)=>{
-    const r=await fetchWithRefresh(`${SURL}/rest/v1/profiles?id=eq.${athId}`,{method:"PATCH",headers:{"Content-Type":"application/json","apikey":SKEY,"Authorization":`Bearer ${_tok}`},body:JSON.stringify({coach_id:coachId})});
-    if(!r.ok){const t=await r.text();alert("Error: "+t);return;}
-    // Reload all athletes
-    const all=await fetchWithRefresh(`${SURL}/rest/v1/profiles?role=eq.athlete&select=*&limit=5000`,{headers:{"apikey":SKEY,"Authorization":`Bearer ${_tok}`}}).then(r=>r.json()).catch(()=>[]);
-    if(Array.isArray(all))setAthletes(all);
+  const assignCoachToAthlete=async(athId,coachId)=>{
+    const athlete=athletes.find(a=>a.id===athId);
+    const current=athlete?.coach_ids||[];
+    if(current.includes(coachId))return;
+    const updated=[...current,coachId];
+    setAthletes(p=>p.map(a=>a.id===athId?{...a,coach_ids:updated}:a));
+    const r=await fetchWithRefresh(`${SURL}/rest/v1/profiles?id=eq.${athId}`,{method:"PATCH",headers:{"Content-Type":"application/json","apikey":SKEY,"Authorization":`Bearer ${_tok}`},body:JSON.stringify({coach_ids:updated})});
+    if(!r.ok){alert("Error: "+await r.text());}
+  };
+  const removeCoachFromAthlete=async(athId,coachId)=>{
+    const athlete=athletes.find(a=>a.id===athId);
+    const current=athlete?.coach_ids||[];
+    const updated=coachId===null?[]:current.filter(c=>c!==coachId);
+    setAthletes(p=>p.map(a=>a.id===athId?{...a,coach_ids:updated}:a));
+    const r=await fetchWithRefresh(`${SURL}/rest/v1/profiles?id=eq.${athId}`,{method:"PATCH",headers:{"Content-Type":"application/json","apikey":SKEY,"Authorization":`Bearer ${_tok}`},body:JSON.stringify({coach_ids:updated})});
+    if(!r.ok){alert("Error: "+await r.text());}
   };
 
   const deleteProgram=async(progId)=>{
@@ -964,7 +983,7 @@ ${doneEx.map(e=>e.name).join(", ")}`,
   };
 
   const saveAthlete=async(ath)=>{
-    const row={email:ath.email||`athlete_${Date.now()}@diamondtrack.local`,name:ath.name,role:"athlete",position:ath.position,other_positions:ath.other_positions||null,grad:ath.grad||null,age_group:ath.age_group||null,gpa:ath.gpa||null,high_school:ath.high_school||null,dream_school:ath.dreamSchool||ath.dream_school||null,height:ath.height||null,weight:ath.weight||null,bats:ath.bats||null,throws:ath.throws||null,committed:ath.committed||false,avatar:ini(ath.name),measurables:ath.measurables||{},coach_id:ath.coach_id||profile.id};
+    const row={email:ath.email||`athlete_${Date.now()}@diamondtrack.local`,name:ath.name,role:"athlete",position:ath.position,other_positions:ath.other_positions||null,grad:ath.grad||null,age_group:ath.age_group||null,gpa:ath.gpa||null,high_school:ath.high_school||null,dream_school:ath.dreamSchool||ath.dream_school||null,height:ath.height||null,weight:ath.weight||null,bats:ath.bats||null,throws:ath.throws||null,committed:ath.committed||false,avatar:ini(ath.name),measurables:ath.measurables||{},coach_ids:ath.coach_ids||[profile.id]};
     if(ath.id){
       console.log("Saving athlete profile:",ath.id,JSON.stringify(row));
       const r=await fetchWithRefresh(`${SURL}/rest/v1/profiles?id=eq.${ath.id}`,{method:"PATCH",headers:{"Content-Type":"application/json","apikey":SKEY,"Authorization":`Bearer ${_tok}`,"Prefer":"return=representation"},body:JSON.stringify(row)});
@@ -1089,7 +1108,7 @@ ${doneEx.map(e=>e.name).join(", ")}`,
       case"athletes":return<AthRoster athletes={filtAthletes} allAthletes={athletes} programs={programs} calcPct={calcPct} gradF={gradF} setGradF={setGradF} groupF={groupF} setGroupF={setGroupF} onView={a=>setViewAth(a)} onAdd={()=>setModal("addAth")}/>;
       case"programs":return<ProgsPage athletes={athletes} programs={programs} calcPct={calcPct} onView={setViewProg} onAdd={()=>setModal("addProg")} onAddGroup={()=>setModal("addGroup")}/>;
       case"groups":return<GroupsPage athletes={athletes} onClickAth={a=>{setViewAth(a);setCoachPage("athletes");}}/>;      
-      case"coaches":return<CoachesPage coaches={coaches} programs={programs} athletes={athletes} allAthletes={athletes} calcPct={calcPct} onViewAth={a=>{setViewAth(a);setCoachPage("athletes");}} onReassign={reassignAthlete}/>;
+      case"coaches":return<CoachesPage coaches={coaches} programs={programs} athletes={athletes} allAthletes={athletes} calcPct={calcPct} onViewAth={a=>{setViewAth(a);setCoachPage("athletes");}} onAssignCoach={assignCoachToAthlete} onRemoveCoach={removeCoachFromAthlete}/>;
 
       case"notifications":return<NotifPage notifs={notifs} setNotifs={setNotifs} profile={profile}/>;
       default:return null;
@@ -2648,11 +2667,11 @@ function PrintableLineupCard({game,team,weekend,athletes,staffById}){
       ):(
         <div>
           {lineup.map((entry,idx)=>{
-            const a=athletes.find(x=>x.id===entry.athleteId);
+            const p=gamePlayers(game,athletes).find(x=>x.id===entry.athleteId);
             return(
               <div key={entry.athleteId} style={{display:"flex",alignItems:"center",gap:10,padding:"5px 0",borderBottom:"1px solid rgba(0,0,0,.2)"}}>
                 <div style={{width:20,height:20,borderRadius:"50%",border:"1.5px solid #000",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,flexShrink:0,color:"#000"}}>{idx+1}</div>
-                <div style={{flex:1,fontSize:14,fontWeight:700,color:"#000"}}>{a?.name||"Unknown"}</div>
+                <div style={{flex:1,fontSize:14,fontWeight:700,color:"#000"}}>{p?.name||"Unknown"}{p?.isGuest&&<span style={{fontWeight:600,fontSize:10}}> (Guest)</span>}</div>
                 <div style={{fontSize:13,fontWeight:700,color:"#000",minWidth:30,textAlign:"right"}}>{entry.position||"–"}</div>
               </div>
             );
@@ -2664,11 +2683,11 @@ function PrintableLineupCard({game,team,weekend,athletes,staffById}){
         <div style={{marginTop:10,paddingTop:8,borderTop:"2px solid #000"}}>
           <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:1,marginBottom:3,color:"#000"}}>Pitching</div>
           {game.pitching.map(p=>{
-            const a=athletes.find(x=>x.id===p.athleteId);
+            const a=gamePlayers(game,athletes).find(x=>x.id===p.athleteId);
             const inn=(p.innings||[]).slice().sort((x,y)=>x-y).join(", ")||"—";
             return(
               <div key={p.id} style={{fontSize:11,marginBottom:2,color:"#000"}}>
-                <b>{a?.name||"Unknown"}</b> — Inn {inn}{p.limit?` (max ${p.limit})`:""}{p.note?` — ${p.note}`:""}
+                <b>{a?.name||"Unknown"}{a?.isGuest&&" (Guest)"}</b> — Inn {inn}{p.limit?` (max ${p.limit})`:""}{p.note?` — ${p.note}`:""}
               </div>
             );
           })}
@@ -2693,15 +2712,15 @@ function GameSummary({game,athletes}){
   const innCount=game.innings||6;
   const ids=new Set((game.lineup||[]).map(l=>l.athleteId));
   for(let i=1;i<=innCount;i++){Object.values(getChartForInning(game,i)).forEach(id=>{if(id)ids.add(id);});}
-  const rows=[...ids].map(id=>({athlete:athletes.find(a=>a.id===id),stats:computeAthleteStats(id,[game])})).filter(r=>r.athlete&&r.stats.totalInnings>0).sort((a,b)=>a.athlete.name.localeCompare(b.athlete.name));
+  const rows=[...ids].map(id=>({player:gamePlayers(game,athletes).find(p=>p.id===id),stats:computeAthleteStats(id,[game])})).filter(r=>r.player&&r.stats.totalInnings>0).sort((a,b)=>a.player.name.localeCompare(b.player.name));
   if(rows.length===0)return<div style={{fontSize:12,color:"#6b82a0"}}>No positions were logged for this game.</div>;
   return(
     <div>
       {rows.map(r=>{
         const posEntries=Object.entries(r.stats.posCounts).sort((a,b)=>b[1]-a[1]);
         return(
-          <div key={r.athlete.id} style={{marginBottom:8,paddingBottom:8,borderBottom:"1px solid rgba(255,255,255,.06)"}}>
-            <div style={{fontWeight:700,fontSize:13,marginBottom:2}}>{r.athlete.name} <span style={{color:"#6b82a0",fontWeight:400,fontSize:11}}>· {r.stats.totalInnings} innings</span></div>
+          <div key={r.player.id} style={{marginBottom:8,paddingBottom:8,borderBottom:"1px solid rgba(255,255,255,.06)"}}>
+            <div style={{fontWeight:700,fontSize:13,marginBottom:2}}>{r.player.name}{r.player.isGuest&&<span style={{color:"#e8a020",fontWeight:600,fontSize:10}}> (Guest)</span>} <span style={{color:"#6b82a0",fontWeight:400,fontSize:11}}>· {r.stats.totalInnings} innings</span></div>
             <div style={{fontSize:11,color:"#8fa3be"}}>{posEntries.map(([pos,n])=>`${pos} ${Math.round(n/r.stats.totalInnings*100)}%`).join("   ·   ")}</div>
           </div>
         );
@@ -2716,11 +2735,24 @@ function GameDetail({game,team,weekend,athletes,staffById,profile,onBack,onPatch
   const[tracking,setTracking]=useState(false);
   useEffect(()=>{setCurrentInning(1);setTracking(false);},[game.id]);
 
+  const[guestName,setGuestName]=useState("");
   const rosterIds=team?.athlete_ids||[];
+  const guestIds=(game.guests||[]).map(g=>g.id);
+  const selectableIds=[...rosterIds,...guestIds];
   const inLineupIds=(game.lineup||[]).map(l=>l.athleteId);
-  const available=rosterIds.filter(id=>!inLineupIds.includes(id)).map(id=>athletes.find(a=>a.id===id)).filter(Boolean);
+  const available=selectableIds.filter(id=>!inLineupIds.includes(id)).map(id=>gamePlayers(game,athletes).find(p=>p.id===id)).filter(Boolean);
 
   const addToLineup=(athleteId)=>onPatchGame(game.id,{lineup:[...(game.lineup||[]),{athleteId,position:""}]});
+  const addGuestToLineup=()=>{
+    const name=guestName.trim();
+    if(!name)return;
+    const id=`guest_${Date.now().toString(36)}${Math.random().toString(36).slice(2,6)}`;
+    onPatchGame(game.id,{
+      guests:[...(game.guests||[]),{id,name}],
+      lineup:[...(game.lineup||[]),{athleteId:id,position:""}]
+    });
+    setGuestName("");
+  };
   const removeFromLineup=(athleteId)=>onPatchGame(game.id,{lineup:game.lineup.filter(l=>l.athleteId!==athleteId)});
   const setLineupPosition=(athleteId,position)=>onPatchGame(game.id,{lineup:game.lineup.map(l=>l.athleteId===athleteId?{...l,position}:l)});
   const moveLineup=(index,dir)=>{const arr=[...game.lineup];const j=index+dir;if(j<0||j>=arr.length)return;[arr[index],arr[j]]=[arr[j],arr[index]];onPatchGame(game.id,{lineup:arr});};
@@ -2761,11 +2793,11 @@ function GameDetail({game,team,weekend,athletes,staffById,profile,onBack,onPatch
           {(!game.lineup||game.lineup.length===0)?(
             <div style={{textAlign:"center",color:"#6b82a0",fontSize:12,padding:"10px 0"}}>No batters added yet</div>
           ):game.lineup.map((entry,i)=>{
-            const a=athletes.find(x=>x.id===entry.athleteId);
+            const a=gamePlayers(game,athletes).find(x=>x.id===entry.athleteId);
             return(
               <div key={entry.athleteId} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-                <div style={{width:26,height:26,borderRadius:"50%",background:"#e8a020",color:"#0a0a0a",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,flexShrink:0}}>{i+1}</div>
-                <div style={{flex:1,fontSize:13,fontWeight:600}}>{a?.name||"Unknown"}</div>
+                <div style={{width:26,height:26,borderRadius:"50%",background:a?.isGuest?"#3a9be8":"#e8a020",color:"#0a0a0a",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,flexShrink:0}}>{i+1}</div>
+                <div style={{flex:1,fontSize:13,fontWeight:600,minWidth:0}}>{a?.name||"Unknown"}{a?.isGuest&&<span style={{color:"#3a9be8",fontWeight:700,fontSize:10}}> · Guest</span>}</div>
                 <select className="inp" style={{width:80,padding:"5px 7px",fontSize:11}} value={entry.position} onChange={e=>setLineupPosition(entry.athleteId,e.target.value)}>
                   <option value="">Pos?</option>{LINEUP_POS.map(p=><option key={p} value={p}>{p}</option>)}
                 </select>
@@ -2783,10 +2815,19 @@ function GameDetail({game,team,weekend,athletes,staffById,profile,onBack,onPatch
       {available.length>0&&(
         <div className="card" style={{marginBottom:14}}>
           <div className="ds">Add to Lineup</div>
-          <div className="fb" style={{marginBottom:0}}>{available.map(a=><button key={a.id} className="fc" onClick={()=>addToLineup(a.id)}>+ {a.name}</button>)}</div>
+          <div className="fb" style={{marginBottom:0}}>{available.map(a=><button key={a.id} className="fc" onClick={()=>addToLineup(a.id)}>+ {a.name}{a.isGuest?" (Guest)":""}</button>)}</div>
         </div>
       )}
       {rosterIds.length===0&&<div className="card" style={{marginBottom:14}}><div style={{fontSize:12,color:"#6b82a0"}}>This team has no roster yet — add players to it from Weekends &amp; Teams.</div></div>}
+
+      <div className="card" style={{marginBottom:14}}>
+        <div className="ds">Pickup Player</div>
+        <div style={{fontSize:11,color:"#6b82a0",marginBottom:8}}>For someone filling in just for this game — no RATrack account needed.</div>
+        <div style={{display:"flex",gap:8}}>
+          <input className="inp" placeholder="Player's name" value={guestName} onChange={e=>setGuestName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addGuestToLineup()} style={{flex:1}}/>
+          <button className="btn bg bsm" disabled={!guestName.trim()} onClick={addGuestToLineup}>+ Add to Lineup</button>
+        </div>
+      </div>
 
       <div className="card" style={{marginBottom:14,borderColor:game.tracking_complete?"rgba(39,201,122,.3)":undefined}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:tracking?6:0}}>
@@ -2820,29 +2861,29 @@ function GameDetail({game,team,weekend,athletes,staffById,profile,onBack,onPatch
                 <button key={inn} onClick={()=>setCurrentInning(inn)} style={{flexShrink:0,width:32,height:32,borderRadius:8,border:"none",fontWeight:700,fontSize:13,cursor:"pointer",background:currentInning===inn?"#e8a020":"rgba(255,255,255,.06)",color:currentInning===inn?"#0a0a0a":"#8fa3be"}}>{inn}</button>
               ))}
             </div>
-            {rosterIds.length===0?(
-              <div style={{fontSize:12,color:"#6b82a0"}}>Add players to this team's roster to set positions.</div>
+            {selectableIds.length===0?(
+              <div style={{fontSize:12,color:"#6b82a0"}}>Add players to this team's roster (or a pickup player below) to set positions.</div>
             ):(()=>{
               const chart=getChartForInning(game,currentInning);
               const assignedIds=new Set(Object.values(chart).filter(Boolean));
-              const unassigned=rosterIds.filter(id=>!assignedIds.has(id)).map(id=>athletes.find(a=>a.id===id)).filter(Boolean);
+              const unassigned=selectableIds.filter(id=>!assignedIds.has(id)).map(id=>gamePlayers(game,athletes).find(p=>p.id===id)).filter(Boolean);
               return(<>
                 {unassigned.length>0&&(
                   <div style={{marginBottom:10,padding:"8px 10px",background:"rgba(232,160,32,.06)",border:"1px solid rgba(232,160,32,.2)",borderRadius:8}}>
                     <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",color:"#e8a020",marginBottom:4}}>Still need a spot — Inn {currentInning}</div>
-                    <div style={{fontSize:12,color:"#eef2f8"}}>{unassigned.map(a=>a.name).join(", ")}</div>
+                    <div style={{fontSize:12,color:"#eef2f8"}}>{unassigned.map(a=>a.name+(a.isGuest?" (Guest)":"")).join(", ")}</div>
                   </div>
                 )}
                 <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
                   {FIELD_POS.map(pos=>{
                     const value=chart[pos]||"";
-                    const options=rosterIds.filter(id=>id===value||!assignedIds.has(id));
+                    const options=selectableIds.filter(id=>id===value||!assignedIds.has(id));
                     return(
                       <div key={pos} style={{background:"rgba(255,255,255,.04)",borderRadius:8,padding:8}}>
                         <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",color:"#6b82a0",marginBottom:4}}>{pos}</div>
                         <select className="inp" style={{fontSize:11,padding:"5px 6px"}} value={value} onChange={e=>setInningPosition(currentInning,pos,e.target.value)}>
                           <option value="">—</option>
-                          {options.map(id=>{const a=athletes.find(x=>x.id===id);return a?<option key={id} value={id}>{a.name}</option>:null;})}
+                          {options.map(id=>{const a=gamePlayers(game,athletes).find(x=>x.id===id);return a?<option key={id} value={id}>{a.name}{a.isGuest?" (Guest)":""}</option>:null;})}
                         </select>
                       </div>
                     );
@@ -2870,7 +2911,7 @@ function GameDetail({game,team,weekend,athletes,staffById,profile,onBack,onPatch
             <div style={{display:"flex",gap:8,marginBottom:8,alignItems:"center"}}>
               <select className="inp" style={{flex:1}} value={p.athleteId} onChange={e=>updatePitcher(p.id,{athleteId:e.target.value})}>
                 <option value="">Select pitcher...</option>
-                {rosterIds.map(id=>{const a=athletes.find(x=>x.id===id);return a?<option key={id} value={id}>{a.name}</option>:null;})}
+                {selectableIds.map(id=>{const a=gamePlayers(game,athletes).find(x=>x.id===id);return a?<option key={id} value={id}>{a.name}{a.isGuest?" (Guest)":""}</option>:null;})}
               </select>
               <button onClick={()=>removePitcher(p.id)} style={{background:"none",border:"none",color:"#e84040",cursor:"pointer",fontSize:14}}>✕</button>
             </div>
@@ -3033,16 +3074,16 @@ function CheckInPage({athletes,checkins,programs,profile,onToggleCheckin,onBulkC
   );
 }
 
-function CoachesPage({coaches,programs,athletes,allAthletes,calcPct,onViewAth,onReassign}){
+function CoachesPage({coaches,programs,athletes,allAthletes,calcPct,onViewAth,onAssignCoach,onRemoveCoach}){
   const[expanded,setExpanded]=useState(null);
   const[showAssign,setShowAssign]=useState(null);
   const[filterChip,setFilterChip]=useState("All");
   const[nameSearch,setNameSearch]=useState("");
   const[selected,setSelected]=useState([]); // selected athlete ids
 
-  const unassigned=allAthletes.filter(a=>!a.coach_id);
+  const unassigned=allAthletes.filter(a=>!(a.coach_ids||[]).length);
 
-  const assignedTo=(coachId)=>allAthletes.filter(a=>a.coach_id===coachId);
+  const assignedTo=(coachId)=>allAthletes.filter(a=>(a.coach_ids||[]).includes(coachId));
 
   const getFiltered=()=>{
     let list=allAthletes;
@@ -3064,14 +3105,21 @@ function CoachesPage({coaches,programs,athletes,allAthletes,calcPct,onViewAth,on
 
   const assignSelected=async(coachId)=>{
     for(const id of selected){
-      await onReassign(id,coachId);
+      await onAssignCoach(id,coachId);
     }
     setSelected([]);
   };
 
   const removeSelected=async()=>{
     for(const id of selected){
-      await onReassign(id,null);
+      await onRemoveCoach(id,null);
+    }
+    setSelected([]);
+  };
+
+  const removeSelectedFromThisCoach=async()=>{
+    for(const id of selected){
+      await onRemoveCoach(id,showAssign);
     }
     setSelected([]);
   };
@@ -3130,8 +3178,8 @@ function CoachesPage({coaches,programs,athletes,allAthletes,calcPct,onViewAth,on
         {filteredList.length===0&&<div style={{fontSize:12,color:"#6b82a0",textAlign:"center",padding:"16px 0"}}>No athletes match this filter</div>}
         {filteredList.map(a=>{
           const isSelected=selected.includes(a.id);
-          const currentCoach=a.coach_id?coaches.find(co=>co.id===a.coach_id):null;
-          const isAssignedHere=a.coach_id===showAssign;
+          const currentCoaches=(a.coach_ids||[]).map(cid=>coaches.find(co=>co.id===cid)).filter(Boolean);
+          const isAssignedHere=(a.coach_ids||[]).includes(showAssign);
           return(
             <div key={a.id} onClick={()=>toggleSelect(a.id)} style={{display:"flex",alignItems:"center",gap:9,padding:"8px 10px",background:isSelected?"rgba(232,160,32,.08)":"rgba(255,255,255,.02)",border:`1px solid ${isSelected?"rgba(232,160,32,.3)":"rgba(255,255,255,.06)"}`,borderRadius:8,cursor:"pointer",transition:"all .15s"}}>
               {/* Checkbox */}
@@ -3145,8 +3193,8 @@ function CoachesPage({coaches,programs,athletes,allAthletes,calcPct,onViewAth,on
               </div>
               {isAssignedHere
                 ?<span className="bdg bg2" style={{flexShrink:0}}>✓ Assigned</span>
-                :currentCoach
-                  ?<span style={{fontSize:9,color:"#e8a020",fontWeight:700,flexShrink:0,textAlign:"right"}}>{currentCoach.name.split(" ")[0]}</span>
+                :currentCoaches.length>0
+                  ?<span style={{fontSize:9,color:"#e8a020",fontWeight:700,flexShrink:0,textAlign:"right",maxWidth:90}}>{currentCoaches.map(c=>c.name.split(" ")[0]).join(", ")}</span>
                   :<span style={{fontSize:9,color:"#6b82a0",flexShrink:0}}>Unassigned</span>}
             </div>
           );
@@ -3155,7 +3203,8 @@ function CoachesPage({coaches,programs,athletes,allAthletes,calcPct,onViewAth,on
 
       {/* Action buttons */}
       {selected.length>0&&<div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-        <button className="btn bg" onClick={()=>assignSelected(showAssign)}>Assign {selected.length} to {coaches.find(co=>co.id===showAssign)?.name?.split(" ")[0]}</button>
+        <button className="btn bg" onClick={()=>assignSelected(showAssign)}>+ Add {selected.length} to {coaches.find(co=>co.id===showAssign)?.name?.split(" ")[0]}</button>
+        <button className="btn bgh bsm" onClick={removeSelectedFromThisCoach}>Remove {selected.length} from {coaches.find(co=>co.id===showAssign)?.name?.split(" ")[0]}</button>
         <button className="btn bgr bsm" onClick={removeSelected}>Remove {selected.length} from all coaches</button>
       </div>}
     </div>}
@@ -3191,7 +3240,7 @@ function CoachesPage({coaches,programs,athletes,allAthletes,calcPct,onViewAth,on
                   <div key={a.id} className="ri" style={{cursor:"pointer"}} onClick={()=>onViewAth(a)}>
                     <div className="riv" style={{width:28,height:28,fontSize:10}}>{a.avatar||ini(a.name)}</div>
                     <div style={{flex:1}}><div style={{fontSize:12,fontWeight:600}}>{a.name}</div><div style={{fontSize:10,color:"#6b82a0"}}>{a.position}{a.grad?` · ${a.grad}`:a.age_group?` · ${a.age_group}`:""}</div></div>
-                    <button className="btn bgr bsm" onClick={e=>{e.stopPropagation();onReassign(a.id,null);}}>Remove</button>
+                    <button className="btn bgr bsm" onClick={e=>{e.stopPropagation();onRemoveCoach(a.id,coach.id);}}>Remove</button>
                   </div>
                 ))}
               </div>
