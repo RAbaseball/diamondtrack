@@ -221,6 +221,9 @@ const GC_COLS={
   // Batting — verified against RA CSV
   bat_gp:3,bat_pa:4,bat_ab:5,bat_h:10,bat_1b:11,bat_2b:12,bat_3b:13,bat_hr:14,
   bat_rbi:15,bat_r:16,bat_bb:17,bat_so:18,bat_hbp:20,bat_sf:22,bat_sb:25,bat_qab:29,bat_tb:43,
+  // Pitching — standard GC column positions
+  pit_gp:44,pit_gs:45,pit_ip:46,pit_bf:47,pit_p:48,pit_s:49,pit_b:50,
+  pit_h:51,pit_r:52,pit_er:53,pit_bb:54,pit_so:55,pit_hr:56,pit_hbp:57,pit_wp:58,
   // Fielding summary cols
   fld_tc:148,fld_ast:149,fld_po:150,fld_e_total:152,
   // Innings per position
@@ -282,6 +285,14 @@ function parseGameChangerCSV(text){
         hr:num(r[GC_COLS.bat_hr]),rbi:num(r[GC_COLS.bat_rbi]),r:num(r[GC_COLS.bat_r]),
         bb:num(r[GC_COLS.bat_bb]),so:num(r[GC_COLS.bat_so]),sb:num(r[GC_COLS.bat_sb]),
         hbp:num(r[GC_COLS.bat_hbp]),sf:num(r[GC_COLS.bat_sf]),tb:num(r[GC_COLS.bat_tb]),qab:num(r[GC_COLS.bat_qab])
+      },
+      pitching:{
+        gp:num(r[GC_COLS.pit_gp]),gs:num(r[GC_COLS.pit_gs]),
+        ip:innings(r[GC_COLS.pit_ip]),bf:num(r[GC_COLS.pit_bf]),
+        p:num(r[GC_COLS.pit_p]),s:num(r[GC_COLS.pit_s]),b:num(r[GC_COLS.pit_b]),
+        h:num(r[GC_COLS.pit_h]),r:num(r[GC_COLS.pit_r]),er:num(r[GC_COLS.pit_er]),
+        bb:num(r[GC_COLS.pit_bb]),so:num(r[GC_COLS.pit_so]),hr:num(r[GC_COLS.pit_hr]),
+        hbp:num(r[GC_COLS.pit_hbp]),wp:num(r[GC_COLS.pit_wp])
       },
       fielding:{
         // Innings per position — GC uses baseball notation (X.1=1/3, X.2=2/3)
@@ -7929,6 +7940,68 @@ function WeekendReport({weekend,teams,games,athletes,onPatchWeekend}){
       {/* Clean stat tables */}
       {playerStats.length>0&&<div>
 
+        {/* Pitching */}
+        {chartTab==="pitching"&&(function(){
+          // Aggregate pitching stats across all weekend games with data
+          const pitchMap={};
+          gamesWithData.forEach(function(g){
+            const imp=g.imported_pitching||{};
+            Object.entries(imp).forEach(function([athId,p]){
+              if(!p||!p.ip)return;
+              if(!pitchMap[athId])pitchMap[athId]={ip:0,p:0,s:0,bb:0,so:0,r:0,er:0,hr:0,bf:0};
+              const m=pitchMap[athId];
+              m.ip+=p.ip||0;m.p+=p.p||0;m.s+=p.s||0;m.bb+=p.bb||0;
+              m.so+=p.so||0;m.r+=p.r||0;m.er+=p.er||0;m.hr+=p.hr||0;m.bf+=p.bf||0;
+            });
+          });
+          const pitchers=Object.entries(pitchMap).map(function([athId,p]){
+            const ath=athletes.find(function(a){return a.id===athId;})||{name:"Unknown"};
+            const strikePct=p.p>0?Math.round(p.s/p.p*100):0;
+            return{ath,p,strikePct};
+          }).filter(function(x){return x.p.ip>0;}).sort(function(a,b){return b.p.ip-a.p.ip;});
+
+          if(pitchers.length===0)return(<div className="empty"><div className="ei">⚾</div><div className="et">No pitching data</div><div className="es">Import GameChanger CSVs for games where pitchers were used. Make sure your GC export includes pitching columns.</div></div>);
+
+          const fmtIp=(ip)=>{const whole=Math.floor(ip);const frac=Math.round((ip-whole)*10);return frac===0?String(whole):whole+"."+frac;};
+          return(
+            <div>
+              <div style={{fontWeight:700,fontSize:12,textTransform:"uppercase",color:"#6b82a0",letterSpacing:.5,marginBottom:8}}>⚾ Pitching — {scopeLabel}</div>
+              <div style={{border:"1px solid rgba(255,255,255,.08)",borderRadius:8,overflow:"auto",marginBottom:16}}>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:520}}>
+                  <thead>
+                    <tr style={{background:"rgba(255,255,255,.05)"}}>
+                      <th style={{padding:"8px 10px",textAlign:"left",fontWeight:700,color:"#6b82a0",fontSize:10}}>PITCHER</th>
+                      <th style={{padding:"8px 8px",textAlign:"center",fontWeight:700,color:"#e8a020",fontSize:10}}>IP</th>
+                      <th style={{padding:"8px 8px",textAlign:"center",fontWeight:700,color:"#6b82a0",fontSize:10}}>P</th>
+                      <th style={{padding:"8px 8px",textAlign:"center",fontWeight:700,color:"#27c97a",fontSize:10}}>STR%</th>
+                      <th style={{padding:"8px 8px",textAlign:"center",fontWeight:700,color:"#6b82a0",fontSize:10}}>K</th>
+                      <th style={{padding:"8px 8px",textAlign:"center",fontWeight:700,color:"#6b82a0",fontSize:10}}>BB</th>
+                      <th style={{padding:"8px 8px",textAlign:"center",fontWeight:700,color:"#e84040",fontSize:10}}>R</th>
+                      <th style={{padding:"8px 8px",textAlign:"center",fontWeight:700,color:"#e84040",fontSize:10}}>ER</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pitchers.map(function(d,i){
+                      return(
+                        <tr key={d.ath.id||i} style={{borderTop:"1px solid rgba(255,255,255,.05)",background:i%2===0?"transparent":"rgba(255,255,255,.02)"}}>
+                          <td style={{padding:"8px 10px",fontWeight:600,color:"#eef2f8"}}>{d.ath.name}</td>
+                          <td style={{padding:"8px 8px",textAlign:"center",fontWeight:700,color:"#e8a020"}}>{fmtIp(d.p.ip)}</td>
+                          <td style={{padding:"8px 8px",textAlign:"center"}}>{d.p.p||"—"}</td>
+                          <td style={{padding:"8px 8px",textAlign:"center",fontWeight:700,color:d.strikePct>=60?"#27c97a":d.strikePct>=50?"#e8a020":"#e84040"}}>{d.p.p>0?d.strikePct+"%":"—"}</td>
+                          <td style={{padding:"8px 8px",textAlign:"center"}}>{d.p.so||"—"}</td>
+                          <td style={{padding:"8px 8px",textAlign:"center"}}>{d.p.bb||"—"}</td>
+                          <td style={{padding:"8px 8px",textAlign:"center",color:d.p.r>0?"#e84040":"inherit"}}>{d.p.r!==undefined?d.p.r:"—"}</td>
+                          <td style={{padding:"8px 8px",textAlign:"center",color:d.p.er>0?"#e84040":"inherit"}}>{d.p.er!==undefined?d.p.er:"—"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Batting */}
         {(chartTab==="batting"||chartTab==="players")&&<div>
           <div style={{fontWeight:700,fontSize:12,textTransform:"uppercase",color:"#6b82a0",letterSpacing:.5,marginBottom:8}}>📊 Batting — {scopeLabel}</div>
@@ -8028,8 +8101,8 @@ function WeekendReport({weekend,teams,games,athletes,onPatchWeekend}){
         </div>}
 
         {/* Tab selector */}
-        <div style={{display:"flex",gap:4,marginTop:8}}>
-          {[["batting","📊 Batting"],["positions","🛡️ Positions"],["bench","⏱ Bench"],["players","👤 Players"]].map(function(x){
+        <div style={{display:"flex",gap:4,marginTop:8,flexWrap:"wrap"}}>
+          {[["batting","📊 Batting"],["pitching","⚾ Pitching"],["positions","🛡️ Positions"],["bench","⏱ Bench"]].map(function(x){
             return(<button key={x[0]} onClick={()=>setChartTab(x[0])} style={{padding:"5px 10px",borderRadius:6,border:"none",background:chartTab===x[0]?"rgba(232,160,32,.15)":"rgba(255,255,255,.04)",color:chartTab===x[0]?"#e8a020":"#6b82a0",fontSize:11,fontWeight:chartTab===x[0]?700:400,cursor:"pointer"}}>{x[1]}</button>);
           })}
         </div>
@@ -8967,12 +9040,14 @@ function GamesPage({athletes,weekends,teams,games,programs,coaches,profile,onSav
     if(!game)return;
     const newBatting={...(game.batting_stats||{})};
     const newFielding={...(game.imported_fielding||{})};
+    const newPitching={...(game.imported_pitching||{})};
     let newLineup=[...(game.lineup||[])];
     let changedCount=0;
     const notInLineup=[];
     matchedRows.forEach(r=>{
       newBatting[r.athleteId]=r.batting;
       newFielding[r.athleteId]=r.fielding;
+      if(r.pitching&&r.pitching.ip>0)newPitching[r.athleteId]=r.pitching;
       const gcPos=primaryPosFromFielding(r.fielding);
       const idx=newLineup.findIndex(l=>l.athleteId===r.athleteId);
       if(idx!==-1){
@@ -8995,7 +9070,7 @@ function GamesPage({athletes,weekends,teams,games,programs,coaches,profile,onSav
     if(msg&&!window.confirm(msg+"\n\nContinue?")){
       return;
     }
-    onPatchGame(gameId,{lineup:newLineup,batting_stats:newBatting,imported_fielding:newFielding,tracking_complete:true});
+    onPatchGame(gameId,{lineup:newLineup,batting_stats:newBatting,imported_fielding:newFielding,imported_pitching:newPitching,tracking_complete:true});
     setImportGameId(null);
   };
   const[section,setSection]=useState("weekends");
